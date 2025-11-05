@@ -1,0 +1,8 @@
+# depslib dependency file v1.0
+1762377215 source:c:\users\denan\desktop\a_star\main.cpp
+	<iostream>
+	<queue>
+	<vector>
+	<functional>
+	<math.h>
+
