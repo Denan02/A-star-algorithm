@@ -22,6 +22,16 @@ public:
   }
   //Osnovna sekvencijalna metoda
   float A_star(std::pair<int,int>start, std::pair<int,int>finish) {
+
+     if(start.first < 0 || start.first >= broj_redova ||
+        start.second < 0 || start.second >= broj_kolona ||
+        finish.first < 0 || finish.first >= broj_redova ||
+        finish.second < 0 || finish.second >= broj_kolona){
+            std::cerr << "Start ili finis van granica" << std::endl;
+            return -1.0f;
+    }
+
+
     int index_trenutniCvor = start.first*broj_kolona+start.second;
     int index_finishCvor = finish.first*broj_kolona+finish.second;
     const int dx[8] = { 0, -1, 0,  1, -1, -1,  1, 1 };
@@ -43,7 +53,7 @@ public:
       if(std::get<0>(trenutniCvor)==index_finishCvor){
         return std::get<2>(trenutniCvor);
       }
-      if(std::get<0>(obradjeniCvorovi[std::get<0>(trenutniCvor)]) == true){
+      if(std::get<0>(obradjeniCvorovi[index_trenutniCvor])){
          continue;
       }
       index_trenutniCvor = std::get<0>(trenutniCvor);
@@ -62,11 +72,20 @@ public:
       for(int i = 0; i < 8; i++) {
         int nx = x + dx[i];
         int ny = y + dy[i];
+
+        if(nx < 0 || nx >= broj_redova || ny < 0 || ny >= broj_kolona)
+            continue;
+
+        if(cvorovi[index_trenutniCvor][i] == std::numeric_limits<float>::infinity())
+            continue;
+
         int index_susjeda = nx * broj_kolona + ny;
         minHeap.push({index_susjeda,heuristika_za_okolne_cvorove[i] + std::get<2>(trenutniCvor)+cvorovi[std::get<0>(trenutniCvor)][i], std::get<2>(trenutniCvor)+cvorovi[std::get<0>(trenutniCvor)][i], std::get<0>(trenutniCvor)});
       }
       obradjeniCvorovi[std::get<0>(trenutniCvor)] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
     }
+
+    return -1.0f;
 
   }
 };
