@@ -10,3 +10,5 @@ obj/
 # Log i privremeni fajlovi
 *.log
 *.tmp
+
+*.txt
