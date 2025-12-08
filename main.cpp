@@ -379,6 +379,7 @@ public:
   }
   //Paralelizacija bidirectional(pokrene se iz dvije tacke pretraga)
   std::pair<float, std::vector<int>> A_star_v4(std::pair<int,int>start, std::pair<int,int>finish) {
+  //Paralelizirani hijerarhiski a star
     if(start.first < 0 || start.first >= broj_redova ||
        start.second < 0 || start.second >= broj_kolona ||
        finish.first < 0 || finish.first >= broj_redova ||
@@ -577,11 +578,13 @@ public:
       return {std::get<1>(obradjeniCvoroviA[m])+std::get<1>(obradjeniCvoroviB[m]), putanja};
     }
   }
+  std::pair<float, std::vector<int>> A_star_v5(std::pair<int,int>start, std::pair<int,int>finish) {
+  }
 };
 int main()
 {
-    const int rows = 10;
-    const int cols = 10;
+    const int rows = 1000;
+    const int cols = 1000;
     std::pair<int,int> start = {0, 0};
     std::pair<int,int> finish = {rows - 1, cols - 1};
 
