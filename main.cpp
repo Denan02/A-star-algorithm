@@ -312,10 +312,10 @@ public:
     std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako niej obradjen, od kojeg cvora je dobio */ obradjeniCvorovi(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
     DaryHeap<4> minHeap;
     minHeap.reserve(broj_redova * broj_kolona / 20);
-    minHeap.push(index_trenutniCvor, 0, 0, 0);
+    minHeap.push(index_trenutniCvor, 0, 0, 0);/*cvor, f(n), g(n), od_koga*/
 
     std::vector<float> heuristika_za_okolne_cvorove(8);
-    std::tuple<int,float,float,int> trenutniCvor;
+    std::tuple<int,float,float,int> trenutniCvor;/*cvor, f(n), g(n), od_koga*/
 
     while(!minHeap.empty()) {
         trenutniCvor = minHeap.pop();
@@ -389,8 +389,9 @@ public:
 
     std::atomic<bool> done{false};
     std::atomic<int> meet{-1};
-    std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako niej obradjen, od kojeg cvora je dobio */ obradjeniCvoroviA(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
-    std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako niej obradjen, od kojeg cvora je dobio */ obradjeniCvoroviB(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
+
+    std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako nije obradjen, od kojeg cvora je dobio */ obradjeniCvoroviA(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
+    std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako nije obradjen, od kojeg cvora je dobio */ obradjeniCvoroviB(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
     #pragma omp parallel sections num_threads(2) shared(obradjeniCvoroviA, obradjeniCvoroviB, closedBits, done, meet)
     {
       #pragma omp section
@@ -403,10 +404,10 @@ public:
 
         DaryHeap<4> minHeap;
         minHeap.reserve(broj_redova * broj_kolona / 20);
-        minHeap.push(index_trenutniCvor, 0, 0, 0);
+        minHeap.push(index_trenutniCvor, 0, 0, 0);/*cvor, f(n), g(n), od_koga*/
 
         std::vector<float> heuristika_za_okolne_cvorove(8);
-        std::tuple<int,float,float,int> trenutniCvor;
+        std::tuple<int,float,float,int> trenutniCvor;/*cvor, f(n), g(n), od_koga*/
 
         while(!minHeap.empty() && !done.load(std::memory_order_relaxed)) {
             trenutniCvor = minHeap.pop();
@@ -432,14 +433,6 @@ public:
                 if(nx < 0 || nx >= broj_redova || ny < 0 || ny >= broj_kolona)
                     continue;
 
-                int nid = nx * broj_kolona + ny;
-                if (closedBits[nid].load(std::memory_order_acquire) & 2) {
-                    // B je već zatvorio nid
-                    if (!done.exchange(true, std::memory_order_acq_rel))
-                        meet.store(index_trenutniCvor, std::memory_order_release);
-                    break; // prekini neighbor loop; while će izaći zbog done
-                }
-
                 int weight_index = index_trenutniCvor * 8 + i;
                 if(cvorovi_v2[weight_index] == std::numeric_limits<float>::infinity())
                     continue;
@@ -451,6 +444,14 @@ public:
                     if(f_novo < std::get<1>(obradjeniCvoroviA[index_susjeda])){
                       minHeap.push(index_susjeda, f_novo, g_novo, index_trenutniCvor);
                       std::get<1>(obradjeniCvoroviA[index_susjeda]) = f_novo;
+                    }
+                    if (closedBits[index_susjeda].load(std::memory_order_acquire) & 2) {
+                      if (!done.exchange(true, std::memory_order_acq_rel)){
+                          meet.store(index_susjeda, std::memory_order_release);
+                          obradjeniCvoroviA[index_susjeda] = {true, g_novo, index_trenutniCvor};
+                          closedBits[index_susjeda].fetch_or(1, std::memory_order_acq_rel);
+                      }
+                      break;
                     }
                 }
             }
@@ -502,12 +503,6 @@ public:
 
                 if(nx < 0 || nx >= broj_redova || ny < 0 || ny >= broj_kolona)
                     continue;
-                int nid = nx * broj_kolona + ny;
-                if (closedBits[nid].load(std::memory_order_acquire) & 1) {
-                    if (!done.exchange(true, std::memory_order_acq_rel))
-                        meet.store(index_trenutniCvor, std::memory_order_release);
-                    break;
-                }
                 int weight_index = index_trenutniCvor * 8 + i;
                 if(cvorovi_v2[weight_index] == std::numeric_limits<float>::infinity())
                     continue;
@@ -520,6 +515,14 @@ public:
                       minHeap.push(index_susjeda, f_novo, g_novo, index_trenutniCvor);
                       std::get<1>(obradjeniCvoroviB[index_susjeda]) = f_novo;
                     }
+                  if (closedBits[index_susjeda].load(std::memory_order_acquire) & 1) {
+                    if (!done.exchange(true, std::memory_order_acq_rel)) {
+                        meet.store(index_susjeda, std::memory_order_release);
+                        obradjeniCvoroviB[index_susjeda] = {true, g_novo, index_trenutniCvor};
+                        closedBits[index_susjeda].fetch_or(2, std::memory_order_acq_rel);
+                    }
+                    break;
+                  }
                 }
             }
 
@@ -537,14 +540,22 @@ public:
     if (m == -1) return {-1.f, {}};
     else {
       std::vector<int> putanja;
+      std::cout << "m=" << m
+          << " A.closed=" << std::get<0>(obradjeniCvoroviA[m])
+          << " B.closed=" << std::get<0>(obradjeniCvoroviB[m])
+          << " gA=" << std::get<1>(obradjeniCvoroviA[m])
+          << " gB=" << std::get<1>(obradjeniCvoroviB[m])
+          << "\n";
+          uint8_t bits = closedBits[m].load(std::memory_order_acquire);
+std::cout << " bits=" << int(bits) << "\n";
       return {std::get<1>(obradjeniCvoroviA[m])+std::get<1>(obradjeniCvoroviB[m]), putanja};
     }
   }
 };
 int main()
 {
-    const int rows = 1000;
-    const int cols = 1000;
+    const int rows = 1;
+    const int cols = 1;
     std::pair<int,int> start = {0, 0};
     std::pair<int,int> finish = {rows - 1, cols - 1};
 
@@ -558,6 +569,7 @@ int main()
     // 2D vector
     //std::vector<std::vector<float>> cvorovi2d(rows * cols, std::vector<float>(8));
     // flatten vector
+    /*
     std::vector<float> cvorovi_flat(rows * cols * 8);
 
     for(int x = 0; x < rows; x++){
@@ -575,7 +587,7 @@ int main()
                 cvorovi_flat[index_flat + i] = value;
             }
         }
-    }
+    }*/
 
     /* Test 2D vector
     std::cout << "Test 2D vector..." << std::endl;
@@ -589,7 +601,37 @@ int main()
     else
         std::cout << "Put nije pronaden!\n";
     std::cout << "Vrijeme (2D vector): " << trajanje2d.count() << " sekundi\n";*/
+    std::vector<float> cvorovi_flat(rows * cols * 8,
+                                    std::numeric_limits<float>::infinity());
 
+    const int dx[8]  = { 0, -1, 0, 1, -1, -1, 1, 1 };
+    const int dy[8]  = { 1,  0,-1, 0,  1, -1, 1,-1 };
+    const int opp[8] = { 2,  3, 0, 1,  7,  6, 5, 4 };
+
+    // Generiši samo "polovinu" ivica pa preslikaj na drugu stranu
+    for (int x = 0; x < rows; x++) {
+      for (int y = 0; y < cols; y++) {
+        int u = x * cols + y;
+
+        for (int i = 0; i < 8; i++) {
+          int nx = x + dx[i];
+          int ny = y + dy[i];
+          if (nx < 0 || nx >= rows || ny < 0 || ny >= cols) continue;
+
+          int v = nx * cols + ny;
+
+          // Da ne dupliramo: kreiraj težinu samo kad je u < v
+          if (u < v) {
+            float w;
+            if (wall(gen) < 0.05f) w = std::numeric_limits<float>::infinity();
+            else                   w = dis(gen);
+
+            cvorovi_flat[u * 8 + i]        = w;           // u -> v
+            cvorovi_flat[v * 8 + opp[i]]   = w;           // v -> u (suprotni smjer)
+          }
+        }
+      }
+    }
     std::cout << "Test flatten vector1..." << std::endl;
     Graf graf_flat(cvorovi_flat, rows, cols);
     auto t1 = std::chrono::high_resolution_clock::now();
