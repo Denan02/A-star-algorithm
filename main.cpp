@@ -13,6 +13,7 @@
 #include <fstream>
 #include <omp.h>
 #include <immintrin.h>
+#include <atomic>
 
 template<int D = 4>
 class DaryHeap {
@@ -150,6 +151,7 @@ public:
   }
   //Osnovna sekvencijalna metoda
   float A_star(std::pair<int,int>start, std::pair<int,int>finish) {
+  //Koristenje 1D
      if(start.first < 0 || start.first >= broj_redova ||
         start.second < 0 || start.second >= broj_kolona ||
         finish.first < 0 || finish.first >= broj_redova ||
@@ -292,7 +294,7 @@ public:
 
     return -1.0f;
   }
-  //Bolji hit rate i manje ubacivanje u heap
+  //Bolji hit rate i manje ubacivanje u heap i drugi heap
   std::pair<float, std::vector<int>> A_star_v3(std::pair<int,int>start, std::pair<int,int>finish) {
     if(start.first < 0 || start.first >= broj_redova ||
        start.second < 0 || start.second >= broj_kolona ||
@@ -343,16 +345,11 @@ public:
 
         int x = index_trenutniCvor / broj_kolona;
         int y = index_trenutniCvor % broj_kolona;
-//uporediti ovaj nacin  i verziju sa memorisanjem
-//spstiti bad speculation na manje od 5 %
-        // Heuristika za okolne čvorove
         for(int i = 0; i < 8; i++)
             heuristika_za_okolne_cvorove[i] = Heuristika(x + dx[i], y + dy[i], finish.first, finish.second, 1.0f);
-// probaj odmotati petlju, max 2 threada
         for(int i = 0; i < 8; i++) {
             int nx = x + dx[i];
             int ny = y + dy[i];
-            //smanjiti grid za 1, pa ovaj uslov nece biti potreban
             if(nx < 0 || nx >= broj_redova || ny < 0 || ny >= broj_kolona)
                 continue;
 
@@ -376,122 +373,178 @@ public:
 
     return {-1., std::vector<int>(0)};
   }
-  //Paralelizacija
+  //Paralelizacija bidirectional
   std::pair<float, std::vector<int>> A_star_v4(std::pair<int,int>start, std::pair<int,int>finish) {
     if(start.first < 0 || start.first >= broj_redova ||
        start.second < 0 || start.second >= broj_kolona ||
        finish.first < 0 || finish.first >= broj_redova ||
        finish.second < 0 || finish.second >= broj_kolona) {
-        throw std::domain_error("Start ili finis van granica");
+      throw std::domain_error("Start ili finis van granica");
     }
+    const int N = broj_redova * broj_kolona;
+    std::vector<std::atomic<uint8_t>> closedBits(N);
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < N; i++)
+        closedBits[i].store(0, std::memory_order_relaxed);
 
-    int index_trenutniCvor = start.first * broj_kolona + start.second;
-    int index_finishCvor = finish.first * broj_kolona + finish.second;
+    std::atomic<bool> done{false};
+    std::atomic<int> meet{-1};
+    std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako niej obradjen, od kojeg cvora je dobio */ obradjeniCvoroviA(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
+    std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako niej obradjen, od kojeg cvora je dobio */ obradjeniCvoroviB(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
+    #pragma omp parallel sections num_threads(2) shared(obradjeniCvoroviA, obradjeniCvoroviB, closedBits, done, meet)
+    {
+      #pragma omp section
+      {
+        int index_trenutniCvor = start.first * broj_kolona + start.second;
+        int index_finishCvor = finish.first * broj_kolona + finish.second;
 
-    const int dx[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
-    const int dy[8] = { 1, 0, -1, 0, 1, -1, 1, -1 };
+        const int dx[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
+        const int dy[8] = { 1, 0, -1, 0, 1, -1, 1, -1 };
 
-    std::vector<std::tuple<bool, float, int>>/*obradjen, g(n) ili f(n) ako niej obradjen, od kojeg cvora je dobio */ obradjeniCvorovi(broj_redova * broj_kolona, std::make_tuple(false, std::numeric_limits<float>::infinity(), 0));
-    DaryHeap<4> minHeap;
-    minHeap.reserve(broj_redova * broj_kolona / 20);
-    minHeap.push(index_trenutniCvor, 0, 0, 0);
+        DaryHeap<4> minHeap;
+        minHeap.reserve(broj_redova * broj_kolona / 20);
+        minHeap.push(index_trenutniCvor, 0, 0, 0);
 
-    std::vector<float> heuristika_za_okolne_cvorove(8);
-    std::tuple<int,float,float,int> trenutniCvor;
+        std::vector<float> heuristika_za_okolne_cvorove(8);
+        std::tuple<int,float,float,int> trenutniCvor;
 
-    while(!minHeap.empty()) {
-        trenutniCvor = minHeap.pop();
+        while(!minHeap.empty() && !done.load(std::memory_order_relaxed)) {
+            trenutniCvor = minHeap.pop();
 
-        if(std::get<0>(trenutniCvor) == index_finishCvor){
-          std::vector<int> putanja;
-          index_trenutniCvor = std::get<0>(trenutniCvor);
+            if(std::get<0>(trenutniCvor) == index_finishCvor){
+              //Gotovo
+            }
 
-          obradjeniCvorovi[index_trenutniCvor] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
+            index_trenutniCvor = std::get<0>(trenutniCvor);
 
-          int trenutni = index_finishCvor;
-          int start_index = start.first * broj_kolona + start.second;
-
-          while(trenutni != start_index) {
-              putanja.push_back(trenutni);
-              trenutni = std::get<2>(obradjeniCvorovi[trenutni]);
-          }
-          putanja.push_back(start_index);  // dodaj i start
-
-          return {std::get<2>(trenutniCvor), putanja};
-        }
-
-        index_trenutniCvor = std::get<0>(trenutniCvor);
-
-        if(std::get<0>(obradjeniCvorovi[index_trenutniCvor]))
-            continue;
-
-        int x = index_trenutniCvor / broj_kolona;
-        int y = index_trenutniCvor % broj_kolona;
-//uporediti ovaj nacin  i verziju sa memorisanjem
-//spstiti bad speculation na manje od 5 %
-        // Heuristika za okolne čvorove
-        //#pragma omp parallel for num_threads(2)
-        //for(int i = 0; i < 8; i++)
-            //heuristika_za_okolne_cvorove[i] = Heuristika(x + dx[i], y + dy[i], finish.first, finish.second, 1.0f);
-            /*
-          heuristika_za_okolne_cvorove[0] = Heuristika(x, y + 1, finish.first, finish.second, 1.0f);
-          heuristika_za_okolne_cvorove[1] = Heuristika(x - 1, y, finish.first, finish.second, 1.0f);
-          heuristika_za_okolne_cvorove[2] = Heuristika(x, y - 1, finish.first, finish.second, 1.0f);
-          heuristika_za_okolne_cvorove[3] = Heuristika(x + 1, y, finish.first, finish.second, 1.0f);
-          heuristika_za_okolne_cvorove[4] = Heuristika(x - 1, y + 1, finish.first, finish.second, 1.0f);
-          heuristika_za_okolne_cvorove[5] = Heuristika(x - 1, y - 1, finish.first, finish.second, 1.0f);
-          heuristika_za_okolne_cvorove[6] = Heuristika(x + 1, y + 1, finish.first, finish.second, 1.0f);
-          heuristika_za_okolne_cvorove[7] = Heuristika(x + 1, y - 1, finish.first, finish.second, 1.0f);*/
-          alignas(32) float heuristika_za_okolne_cvorove[8];
-
-          __m256 finish_x = _mm256_set1_ps(finish.first);
-          __m256 finish_y = _mm256_set1_ps(finish.second);
-
-          __m256 nx_vec = _mm256_set_ps(x+1, x+1, x-1, x-1, x+1, x, x-1, x);
-          __m256 ny_vec = _mm256_set_ps(y-1, y+1, y-1, y+1, y, y-1, y, y+1);
-
-          __m256 dx_vec = _mm256_sub_ps(nx_vec, finish_x);
-          __m256 dy_vec = _mm256_sub_ps(ny_vec, finish_y);
-
-          __m256 dx2 = _mm256_mul_ps(dx_vec, dx_vec);
-          __m256 dy2 = _mm256_mul_ps(dy_vec, dy_vec);
-          __m256 dist = _mm256_sqrt_ps(_mm256_add_ps(dx2, dy2));
-
-          _mm256_store_ps(heuristika_za_okolne_cvorove, dist);
-
-// probaj odmotati petlju, max 2 threada
-        for(int i = 0; i < 8; i++) {
-            int nx = x + dx[i];
-            int ny = y + dy[i];
-            //smanjiti grid za 1, pa ovaj uslov nece biti potreban
-            if(nx < 0 || nx >= broj_redova || ny < 0 || ny >= broj_kolona)
+            if(std::get<0>(obradjeniCvoroviA[index_trenutniCvor]))
                 continue;
 
-            int weight_index = index_trenutniCvor * 8 + i;
-            if(cvorovi_v2[weight_index] == std::numeric_limits<float>::infinity())
-                continue;
+            int x = index_trenutniCvor / broj_kolona;
+            int y = index_trenutniCvor % broj_kolona;
 
-            int index_susjeda = nx * broj_kolona + ny;
-            if(!std::get<0>(obradjeniCvorovi[index_susjeda])) {
-                float g_novo = std::get<2>(trenutniCvor) + cvorovi_v2[weight_index];
-                float f_novo = g_novo + heuristika_za_okolne_cvorove[i];
-                if(f_novo < std::get<1>(obradjeniCvorovi[index_susjeda])){
-                  minHeap.push(index_susjeda, f_novo, g_novo, index_trenutniCvor);
-                  std::get<1>(obradjeniCvorovi[index_susjeda]) = f_novo;
+            for(int i = 0; i < 8; i++)
+                heuristika_za_okolne_cvorove[i] = Heuristika(x + dx[i], y + dy[i], finish.first, finish.second, 1.0f);
+            for(int i = 0; i < 8; i++) {
+                int nx = x + dx[i];
+                int ny = y + dy[i];
+
+                if(nx < 0 || nx >= broj_redova || ny < 0 || ny >= broj_kolona)
+                    continue;
+
+                int nid = nx * broj_kolona + ny;
+                if (closedBits[nid].load(std::memory_order_acquire) & 2) {
+                    // B je već zatvorio nid
+                    if (!done.exchange(true, std::memory_order_acq_rel))
+                        meet.store(index_trenutniCvor, std::memory_order_release);
+                    break; // prekini neighbor loop; while će izaći zbog done
+                }
+
+                int weight_index = index_trenutniCvor * 8 + i;
+                if(cvorovi_v2[weight_index] == std::numeric_limits<float>::infinity())
+                    continue;
+
+                int index_susjeda = nx * broj_kolona + ny;
+                if(!std::get<0>(obradjeniCvoroviA[index_susjeda])) {
+                    float g_novo = std::get<2>(trenutniCvor) + cvorovi_v2[weight_index];
+                    float f_novo = g_novo + heuristika_za_okolne_cvorove[i];
+                    if(f_novo < std::get<1>(obradjeniCvoroviA[index_susjeda])){
+                      minHeap.push(index_susjeda, f_novo, g_novo, index_trenutniCvor);
+                      std::get<1>(obradjeniCvoroviA[index_susjeda]) = f_novo;
+                    }
                 }
             }
+
+            obradjeniCvoroviA[index_trenutniCvor] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
+            uint8_t prev = closedBits[index_trenutniCvor].fetch_or(1, std::memory_order_acq_rel);
+            if (prev & 2) {
+                if (!done.exchange(true, std::memory_order_acq_rel))
+                    meet.store(index_trenutniCvor, std::memory_order_release);
+                break;
+            }
         }
+      }
+      #pragma omp section
+      {
+        int index_trenutniCvor = finish.first * broj_kolona + finish.second;
+        int index_finishCvor = start.first * broj_kolona + start.second;
 
-        obradjeniCvorovi[index_trenutniCvor] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
+        const int dx[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
+        const int dy[8] = { 1, 0, -1, 0, 1, -1, 1, -1 };
+
+        DaryHeap<4> minHeap;
+        minHeap.reserve(broj_redova * broj_kolona / 20);
+        minHeap.push(index_trenutniCvor, 0, 0, 0);
+
+        std::vector<float> heuristika_za_okolne_cvorove(8);
+        std::tuple<int,float,float,int> trenutniCvor;
+
+        while(!minHeap.empty() && !done.load(std::memory_order_relaxed)) {
+            trenutniCvor = minHeap.pop();
+
+            if(std::get<0>(trenutniCvor) == index_finishCvor){
+                //Gotovo
+            }
+
+            index_trenutniCvor = std::get<0>(trenutniCvor);
+
+            if(std::get<0>(obradjeniCvoroviB[index_trenutniCvor]))
+                continue;
+
+            int x = index_trenutniCvor / broj_kolona;
+            int y = index_trenutniCvor % broj_kolona;
+
+            for(int i = 0; i < 8; i++)
+                heuristika_za_okolne_cvorove[i] = Heuristika(x + dx[i], y + dy[i], start.first, start.second, 1.0f);
+            for(int i = 0; i < 8; i++) {
+                int nx = x + dx[i];
+                int ny = y + dy[i];
+
+                if(nx < 0 || nx >= broj_redova || ny < 0 || ny >= broj_kolona)
+                    continue;
+                int nid = nx * broj_kolona + ny;
+                if (closedBits[nid].load(std::memory_order_acquire) & 1) {
+                    if (!done.exchange(true, std::memory_order_acq_rel))
+                        meet.store(index_trenutniCvor, std::memory_order_release);
+                    break;
+                }
+                int weight_index = index_trenutniCvor * 8 + i;
+                if(cvorovi_v2[weight_index] == std::numeric_limits<float>::infinity())
+                    continue;
+
+                int index_susjeda = nx * broj_kolona + ny;
+                if(!std::get<0>(obradjeniCvoroviB[index_susjeda])) {
+                    float g_novo = std::get<2>(trenutniCvor) + cvorovi_v2[weight_index];
+                    float f_novo = g_novo + heuristika_za_okolne_cvorove[i];
+                    if(f_novo < std::get<1>(obradjeniCvoroviB[index_susjeda])){
+                      minHeap.push(index_susjeda, f_novo, g_novo, index_trenutniCvor);
+                      std::get<1>(obradjeniCvoroviB[index_susjeda]) = f_novo;
+                    }
+                }
+            }
+
+            obradjeniCvoroviB[index_trenutniCvor] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
+            uint8_t prev = closedBits[index_trenutniCvor].fetch_or(2, std::memory_order_acq_rel);
+            if (prev & 1) {
+                if (!done.exchange(true, std::memory_order_acq_rel))
+                    meet.store(index_trenutniCvor, std::memory_order_release);
+                break;
+            }
+        }
+      }
     }
-
-    return {-1., std::vector<int>(0)};
+    int m = meet.load(std::memory_order_acquire);
+    if (m == -1) return {-1.f, {}};
+    else {
+      std::vector<int> putanja;
+      return {std::get<1>(obradjeniCvoroviA[m])+std::get<1>(obradjeniCvoroviB[m]), putanja};
+    }
   }
 };
 int main()
 {
-    const int rows = 10000;
-    const int cols = 10000;
+    const int rows = 1000;
+    const int cols = 1000;
     std::pair<int,int> start = {0, 0};
     std::pair<int,int> finish = {rows - 1, cols - 1};
 
@@ -560,7 +613,5 @@ int main()
     else
         std::cout << "Put nije pronaden!\n";
     std::cout << "Vrijeme (flatten vector): " << trajanje_flat.count() << " sekundi\n";
-    int dfsuih;
-    std::cin >> dfsuih;
     return 0;
 }
