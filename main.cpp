@@ -153,16 +153,14 @@ public:
     broj_kolona = k;
   }
   //Osnovna sekvencijalna metoda
-  float A_star(std::pair<int,int>start, std::pair<int,int>finish) {
+  std::pair<float, std::vector<int>> A_star(std::pair<int,int>start, std::pair<int,int>finish) {
   //Koristenje flatten vektora
   //Koristenje 1D
      if(start.first < 0 || start.first >= broj_redova ||
         start.second < 0 || start.second >= broj_kolona ||
         finish.first < 0 || finish.first >= broj_redova ||
         finish.second < 0 || finish.second >= broj_kolona){
-
           throw std::domain_error("Start ili finis van granica");
-          return -1.0f;
     }
 
     int index_trenutniCvor = start.first*broj_kolona+start.second;
@@ -187,7 +185,21 @@ public:
       trenutniCvor = minHeap.top();
       minHeap.pop();
       if(std::get<0>(trenutniCvor)==index_finishCvor){
-        return std::get<2>(trenutniCvor);
+        std::vector<int> putanja;
+          index_trenutniCvor = std::get<0>(trenutniCvor);
+
+          obradjeniCvorovi[index_trenutniCvor] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
+
+          int trenutni = index_finishCvor;
+          int start_index = start.first * broj_kolona + start.second;
+
+          while(trenutni != start_index) {
+              putanja.push_back(trenutni);
+              trenutni = std::get<2>(obradjeniCvorovi[trenutni]);
+          }
+          putanja.push_back(start_index);  // dodaj i start
+
+          return {std::get<2>(trenutniCvor), putanja};
       }
       index_trenutniCvor = std::get<0>(trenutniCvor);
       if(std::get<0>(obradjeniCvorovi[index_trenutniCvor])){
@@ -223,16 +235,15 @@ public:
       obradjeniCvorovi[std::get<0>(trenutniCvor)] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
     }
 
-    return -1.0f;
+    return {-1., std::vector<int>(0)};
 
   }
-  float A_star_v2(std::pair<int,int>start, std::pair<int,int>finish) {
+  std::pair<float, std::vector<int>> A_star_v2(std::pair<int,int>start, std::pair<int,int>finish) {
     if(start.first < 0 || start.first >= broj_redova ||
        start.second < 0 || start.second >= broj_kolona ||
        finish.first < 0 || finish.first >= broj_redova ||
        finish.second < 0 || finish.second >= broj_kolona) {
         throw std::domain_error("Start ili finis van granica");
-        return -1.0f;
     }
 
     int index_trenutniCvor = start.first * broj_kolona + start.second;
@@ -257,8 +268,23 @@ public:
         trenutniCvor = minHeap.top();
         minHeap.pop();
 
-        if(std::get<0>(trenutniCvor) == index_finishCvor)
-            return std::get<2>(trenutniCvor);
+        if(std::get<0>(trenutniCvor) == index_finishCvor) {
+          std::vector<int> putanja;
+          index_trenutniCvor = std::get<0>(trenutniCvor);
+
+          obradjeniCvorovi[index_trenutniCvor] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
+
+          int trenutni = index_finishCvor;
+          int start_index = start.first * broj_kolona + start.second;
+
+          while(trenutni != start_index) {
+              putanja.push_back(trenutni);
+              trenutni = std::get<2>(obradjeniCvorovi[trenutni]);
+          }
+          putanja.push_back(start_index);  // dodaj i start
+
+          return {std::get<2>(trenutniCvor), putanja};
+        }
 
         index_trenutniCvor = std::get<0>(trenutniCvor);
 
@@ -296,7 +322,7 @@ public:
         obradjeniCvorovi[index_trenutniCvor] = {true, std::get<2>(trenutniCvor), std::get<3>(trenutniCvor)};
     }
 
-    return -1.0f;
+    return {-1., std::vector<int>(0)};
   }
   //Bolji hit rate i manje ubacivanje u heap i drugi heap
   std::pair<float, std::vector<int>> A_star_v3(std::pair<int,int>start, std::pair<int,int>finish) {
@@ -578,13 +604,14 @@ public:
       return {std::get<1>(obradjeniCvoroviA[m])+std::get<1>(obradjeniCvoroviB[m]), putanja};
     }
   }
-  std::pair<float, std::vector<int>> A_star_v5(std::pair<int,int>start, std::pair<int,int>finish) {
-  }
+  //std::pair<float, std::vector<int>> A_star_v5(std::pair<int,int>start, std::pair<int,int>finish) {
+
+  //}
 };
 int main()
 {
-    const int rows = 1000;
-    const int cols = 1000;
+    const int rows = 10000;
+    const int cols = 10000;
     std::pair<int,int> start = {0, 0};
     std::pair<int,int> finish = {rows - 1, cols - 1};
 
@@ -688,7 +715,7 @@ int main()
     std::cout << "Test flatten vector1..." << std::endl;
     Graf graf_flat(cvorovi_flat, rows, cols);
     auto t1 = std::chrono::high_resolution_clock::now();
-    auto path_cost_flat1 = graf_flat.A_star_v3(start, finish);
+    auto path_cost_flat1 = graf_flat.A_star_v2(start, finish);
     auto t2 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> trajanje_flat1 = t2 - t1;
     if(path_cost_flat1.first >= 0){
