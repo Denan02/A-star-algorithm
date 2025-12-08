@@ -136,9 +136,12 @@ private:
   int broj_redova, broj_kolona;
 
   static float Heuristika(int current_x, int current_y, int goal_x, int goal_y, float w_min) {
+    /*int dx = std::abs(goal_x - current_x);
+    int dy = std::abs(goal_y - current_y);
+    return w_min * std::sqrt(dx * dx + dy * dy);*/
     int dx = std::abs(goal_x - current_x);
     int dy = std::abs(goal_y - current_y);
-    return w_min * std::sqrt(dx * dx + dy * dy);
+    return w_min * (float)std::max(dx, dy);
   }
 public:
   Graf(const std::vector<std::vector<float>> &c, int r, int k) : cvorovi(c), cvorovi_v2(std::vector<float>(0)) {
@@ -151,6 +154,7 @@ public:
   }
   //Osnovna sekvencijalna metoda
   float A_star(std::pair<int,int>start, std::pair<int,int>finish) {
+  //Koristenje flatten vektora
   //Koristenje 1D
      if(start.first < 0 || start.first >= broj_redova ||
         start.second < 0 || start.second >= broj_kolona ||
@@ -373,7 +377,7 @@ public:
 
     return {-1., std::vector<int>(0)};
   }
-  //Paralelizacija bidirectional
+  //Paralelizacija bidirectional(pokrene se iz dvije tacke pretraga)
   std::pair<float, std::vector<int>> A_star_v4(std::pair<int,int>start, std::pair<int,int>finish) {
     if(start.first < 0 || start.first >= broj_redova ||
        start.second < 0 || start.second >= broj_kolona ||
@@ -539,23 +543,45 @@ public:
     int m = meet.load(std::memory_order_acquire);
     if (m == -1) return {-1.f, {}};
     else {
-      std::vector<int> putanja;
-      std::cout << "m=" << m
-          << " A.closed=" << std::get<0>(obradjeniCvoroviA[m])
-          << " B.closed=" << std::get<0>(obradjeniCvoroviB[m])
-          << " gA=" << std::get<1>(obradjeniCvoroviA[m])
-          << " gB=" << std::get<1>(obradjeniCvoroviB[m])
-          << "\n";
-          uint8_t bits = closedBits[m].load(std::memory_order_acquire);
-std::cout << " bits=" << int(bits) << "\n";
+      std::vector<int> putanja, putanja1, putanja2;
+      #pragma omp parallel sections num_threads(2) shared(putanja1,putanja2)
+      {
+        #pragma omp section
+        {
+          int trenutni = m;
+          int start_index = start.first * broj_kolona + start.second;
+
+          while(trenutni != start_index) {
+              putanja1.push_back(trenutni);
+              trenutni = std::get<2>(obradjeniCvoroviA[trenutni]);
+          }
+          putanja1.push_back(start_index);
+        }
+        #pragma omp section
+        {
+          int trenutni = m;
+          int finish_index = finish.first * broj_kolona + finish.second;
+
+          while(trenutni != finish_index) {
+              putanja2.push_back(trenutni);
+              trenutni = std::get<2>(obradjeniCvoroviB[trenutni]);
+          }
+          putanja2.push_back(finish_index);
+        }
+      }
+      std::reverse(putanja1.begin(), putanja1.end());
+      putanja.insert(putanja.end(), putanja1.begin(), putanja1.end());
+      if (!putanja2.empty()) {
+          putanja.insert(putanja.end(), putanja2.begin() + 1, putanja2.end());
+      }
       return {std::get<1>(obradjeniCvoroviA[m])+std::get<1>(obradjeniCvoroviB[m]), putanja};
     }
   }
 };
 int main()
 {
-    const int rows = 1;
-    const int cols = 1;
+    const int rows = 10;
+    const int cols = 10;
     std::pair<int,int> start = {0, 0};
     std::pair<int,int> finish = {rows - 1, cols - 1};
 
@@ -632,14 +658,40 @@ int main()
         }
       }
     }
+    auto ispisiPutanju = [&](const std::vector<int>& p) {
+    std::cout << "Duzina putanje: " << p.size() << " cvorova.\n";
+
+    // Ako je putanja preduga, ispisemo samo pocetak i kraj
+    if (p.size() > 20) {
+        std::cout << "Putanja (prvih 5 -> ... -> zadnjih 5): ";
+        for (size_t i = 0; i < 5; i++) {
+            int idx = p[i];
+            std::cout << "(" << idx / cols << "," << idx % cols << ") -> ";
+        }
+        std::cout << " ... ";
+        for (size_t i = p.size() - 5; i < p.size(); i++) {
+            int idx = p[i];
+            std::cout << " -> (" << idx / cols << "," << idx % cols << ")";
+        }
+    } else {
+        // Ako je kratka, ispisemo sve
+        std::cout << "Putanja: ";
+        for (int idx : p) {
+            std::cout << "(" << idx / cols << "," << idx % cols << ") -> ";
+        }
+    }
+    std::cout << "CILJ\n";
+};
     std::cout << "Test flatten vector1..." << std::endl;
     Graf graf_flat(cvorovi_flat, rows, cols);
     auto t1 = std::chrono::high_resolution_clock::now();
     auto path_cost_flat1 = graf_flat.A_star_v3(start, finish);
     auto t2 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> trajanje_flat1 = t2 - t1;
-    if(path_cost_flat1.first >= 0)
+    if(path_cost_flat1.first >= 0){
         std::cout << "Put pronadjen, cijena: " << path_cost_flat1.first << "\n";
+        ispisiPutanju(path_cost_flat1.second);
+    }
     else
         std::cout << "Put nije pronaden!\n";
     std::cout << "Vrijeme (flatten vector): " << trajanje_flat1.count() << " sekundi\n";
@@ -650,8 +702,10 @@ int main()
     auto path_cost_flat = graf_flat.A_star_v4(start, finish);
     auto t4 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> trajanje_flat = t4 - t3;
-    if(path_cost_flat.first >= 0)
+    if(path_cost_flat.first >= 0){
         std::cout << "Put pronadjen, cijena: " << path_cost_flat.first << "\n";
+        ispisiPutanju(path_cost_flat.second);
+    }
     else
         std::cout << "Put nije pronaden!\n";
     std::cout << "Vrijeme (flatten vector): " << trajanje_flat.count() << " sekundi\n";
